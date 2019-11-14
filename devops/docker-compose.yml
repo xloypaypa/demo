@@ -1,0 +1,109 @@
+version: '3.2'
+networks:
+    infrastructure:
+        driver: bridge
+services:
+    prometheus:
+        image: prom/prometheus:latest
+        container_name: prometheus
+        restart: always
+        ports:
+            - 9090:9090
+        command:
+            - --config.file=/etc/prometheus/prometheus.yml
+        volumes:
+            - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+            - ./data/prometheus:/prometheus
+        networks:
+          - infrastructure
+        depends_on:
+            - cadvisor
+    cadvisor:
+        image: google/cadvisor:latest
+        container_name: cadvisor
+        restart: always
+        command: /usr/bin/cadvisor --http_auth_file /htpasswd
+        networks:
+            - infrastructure
+        ports:
+          - "8080:8080"
+        volumes:
+            - ./devops/cadvisor/htpasswd:/htpasswd:ro
+            - /:/rootfs:ro
+            - /var/run:/var/run:rw
+            - /sys:/sys:ro
+            - /var/lib/docker/:/var/lib/docker:ro
+
+    grafana:
+        image: grafana/grafana
+        depends_on:
+            - prometheus
+            - elasticsearch
+        volumes:
+            - ./data/grafana:/var/lib/grafana
+        networks:
+            - infrastructure
+        ports:
+            - '3000:3000'
+        restart: always
+
+    elasticsearch:
+        build:
+            context: elasticsearch/
+            args:
+                ELK_VERSION: $ELK_VERSION
+        volumes:
+            - type: bind
+              source: ./elasticsearch/config/elasticsearch.yml
+              target: /usr/share/elasticsearch/config/elasticsearch.yml
+              read_only: true
+            - ./data/elasticsearch:/usr/share/elasticsearch/data
+        ports:
+            - "9200:9200"
+            - "9300:9300"
+        environment:
+            ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+            ELASTIC_PASSWORD: changeme
+        networks:
+            - infrastructure
+
+    logstash:
+        build:
+            context: logstash/
+            args:
+                ELK_VERSION: $ELK_VERSION
+        volumes:
+            - type: bind
+              source: ./logstash/config/logstash.yml
+              target: /usr/share/logstash/config/logstash.yml
+              read_only: true
+            - type: bind
+              source: ./logstash/pipeline
+              target: /usr/share/logstash/pipeline
+              read_only: true
+        ports:
+            - "5000:5000"
+            - "9600:9600"
+        environment:
+            LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+        networks:
+            - infrastructure
+        depends_on:
+            - elasticsearch
+
+    kibana:
+        build:
+            context: kibana/
+            args:
+                ELK_VERSION: $ELK_VERSION
+        volumes:
+            - type: bind
+              source: ./kibana/config/kibana.yml
+              target: /usr/share/kibana/config/kibana.yml
+              read_only: true
+        ports:
+            - "5601:5601"
+        networks:
+            - infrastructure
+        depends_on:
+            - elasticsearch
